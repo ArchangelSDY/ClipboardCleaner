@@ -1,8 +1,8 @@
 # Clipboard Cleaner
 
 A small Windows-only Go application that clears the current shared clipboard
-after **five seconds without a new copy**. It uses native Win32 clipboard
-notifications, a hidden window, a notification-area (tray) icon, and an **Exit**
+after **10 seconds without a new copy** by default. It uses native Win32 clipboard
+notifications, a hidden window, a notification-area (tray) icon, and a native
 popup menu. It never reads or logs clipboard contents and has no dependencies
 outside the Go standard library.
 
@@ -17,14 +17,27 @@ go build -trimpath -ldflags="-H=windowsgui" -o ClipboardCleaner.exe .
 .\ClipboardCleaner.exe
 ```
 
-The executable has no console window. Click or right-click its tray icon and
-select **Exit** to stop it. Windows may place the icon in the tray overflow.
-Exiting removes the tray icon; it does not clear the clipboard immediately.
+The executable has no console window and starts clearing automatically.
+Click or right-click its tray icon for **Start**, **Stop**, **Timeout...**, and **Exit**.
+**Stop** pauses clipboard clearing but leaves the app and tray icon running.
+**Start** resumes clearing, giving the current clipboard a full grace period
+using the selected timeout. The unavailable action is disabled, and the tray tooltip shows
+whether the cleaner is running or stopped. Windows may place the icon in the
+tray overflow. **Exit** closes the app and removes the tray icon; stopping or
+exiting does not clear the clipboard immediately.
 No startup registration or background service is installed.
 
-Existing clipboard contents get a five-second grace period at launch. Every
+**Timeout...** opens a native settings window. Enter a whole number of seconds
+from **1 to 9223372036** and select **Apply**. Zero, negative, fractional, and
+overflowing values are rejected visibly. Applying restarts the countdown for
+the current clipboard with the new duration; a stopped cleaner stays stopped.
+Cancel or closing the window leaves the setting unchanged. Clearing continues
+while the settings window is open unless you use **Stop** first. The setting is
+kept only in memory: every launch returns to **10 seconds**.
+
+Existing clipboard contents get a 10-second grace period at launch. Every
 clipboard change resets the timer. A 100 ms native timer checks expiration;
-clearing occurs at or shortly after five seconds, subject to Windows scheduling.
+clearing occurs at or shortly after the configured timeout, subject to Windows scheduling.
 The sequence is rechecked with the clipboard locked so a fresh copy cannot be
 deleted by an expired timer. If another application holds the clipboard, the
 cleaner retries without blocking the UI. Failures lasting five additional
@@ -41,5 +54,6 @@ program reduces stale-paste risk; it cannot guarantee removal of data already
 read or retained by another application. Run only one instance.
 
 Tests exercise expiration, reset, lock-time sequence changes, self-generated
-clears, sequence wraparound, and contention retries without touching the actual
+clears, sequence wraparound, contention retries, stop/start grace periods,
+timeout validation, and runtime timeout changes without touching the actual
 clipboard.

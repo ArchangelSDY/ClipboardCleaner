@@ -9,10 +9,10 @@ func TestStartupGrace(t *testing.T) {
 	start := time.Now()
 	p := newClipboardPolicy(10, start)
 	if p.due(start.Add(clipboardTimeout - time.Nanosecond)) {
-		t.Fatal("clipboard expired before five seconds")
+		t.Fatal("clipboard expired before default timeout")
 	}
 	if !p.due(start.Add(clipboardTimeout)) {
-		t.Fatal("clipboard did not expire at five seconds")
+		t.Fatal("clipboard did not expire at default timeout")
 	}
 }
 
@@ -24,7 +24,7 @@ func TestNewCopyResetsDeadline(t *testing.T) {
 	if p.due(start.Add(8 * time.Second)) {
 		t.Fatal("new copy did not receive a full grace period")
 	}
-	if !p.due(start.Add(9 * time.Second)) {
+	if !p.due(start.Add(4*time.Second + clipboardTimeout)) {
 		t.Fatal("unchanged sequence incorrectly extended the deadline")
 	}
 }
@@ -32,10 +32,10 @@ func TestNewCopyResetsDeadline(t *testing.T) {
 func TestCopyWhileAcquiringLockIsProtected(t *testing.T) {
 	start := time.Now()
 	p := newClipboardPolicy(10, start)
-	if p.mayClear(11, start.Add(6*time.Second)) {
+	if p.mayClear(11, start.Add(clipboardTimeout)) {
 		t.Fatal("fresh copy discovered under lock would be deleted")
 	}
-	if !p.mayClear(11, start.Add(11*time.Second)) {
+	if !p.mayClear(11, start.Add(2*clipboardTimeout)) {
 		t.Fatal("fresh copy never expired")
 	}
 }
@@ -68,9 +68,53 @@ func TestSequenceWraparound(t *testing.T) {
 func TestContentionDoesNotExtendDeadline(t *testing.T) {
 	start := time.Now()
 	p := newClipboardPolicy(10, start)
-	for _, elapsed := range []time.Duration{5, 6, 7} {
-		if !p.mayClear(10, start.Add(elapsed*time.Second)) {
+	for _, elapsed := range []time.Duration{clipboardTimeout, clipboardTimeout + time.Second, clipboardTimeout + 2*time.Second} {
+		if !p.mayClear(10, start.Add(elapsed)) {
 			t.Fatal("retry of unchanged clipboard extended deadline")
 		}
+	}
+}
+
+func TestStopPreventsClearingAndIgnoresCopies(t *testing.T) {
+	start := time.Now()
+	p := newClipboardPolicy(10, start)
+	p.stop()
+	p.observe(11, start.Add(clipboardTimeout))
+	if p.enabled || p.armed {
+		t.Fatal("copy while stopped reenabled the cleaner")
+	}
+	if p.mayClear(12, start.Add(time.Hour)) {
+		t.Fatal("stopped cleaner would clear clipboard")
+	}
+}
+
+func TestStartGivesExistingClipboardFullGrace(t *testing.T) {
+	for _, sequence := range []uint32{10, 11} {
+		start := time.Now()
+		p := newClipboardPolicy(10, start)
+		p.stop()
+		resume := start.Add(time.Hour)
+		p.start(sequence, resume)
+		if !p.enabled || p.sequence != sequence {
+			t.Fatal("start did not enable cleaner with current sequence")
+		}
+		if p.due(resume.Add(clipboardTimeout - time.Nanosecond)) {
+			t.Fatal("start reused expired deadline")
+		}
+		if !p.due(resume.Add(clipboardTimeout)) {
+			t.Fatal("clipboard did not expire at timeout after start")
+		}
+	}
+}
+
+func TestStopAtDeadlineCancelsPendingClear(t *testing.T) {
+	start := time.Now()
+	p := newClipboardPolicy(10, start)
+	if !p.due(start.Add(clipboardTimeout)) {
+		t.Fatal("expected pending expiration")
+	}
+	p.stop()
+	if p.mayClear(10, start.Add(clipboardTimeout)) {
+		t.Fatal("stop did not cancel pending clear")
 	}
 }

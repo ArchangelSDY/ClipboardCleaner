@@ -62,6 +62,9 @@ const (
 	trayTip           = 4
 	trayInfo          = 0x10
 	exitCommand       = 1
+	startCommand      = 2
+	stopCommand       = 3
+	timeoutCommand    = 4
 )
 
 type point struct{ x, y int32 }
@@ -100,13 +103,15 @@ type notificationIcon struct {
 }
 
 type application struct {
-	window                 uintptr
-	icon                   notificationIcon
-	policy                 clipboardPolicy
-	taskbarCreated         uint32
-	listening, timer, tray bool
-	failureSince           time.Time
-	failureNotified        bool
+	window                               uintptr
+	icon                                 notificationIcon
+	policy                               clipboardPolicy
+	taskbarCreated                       uint32
+	listening, timer, tray               bool
+	failureSince                         time.Time
+	failureNotified                      bool
+	settings, timeoutEdit, settingsError uintptr
+	settingsClassRegistered              bool
 }
 
 var app application
@@ -153,7 +158,7 @@ func (a *application) reportFailure(err error, now time.Time) {
 	if a.failureSince.IsZero() {
 		a.failureSince = now
 	}
-	if a.failureNotified || now.Sub(a.failureSince) < clipboardTimeout {
+	if a.failureNotified || now.Sub(a.failureSince) < 5*time.Second {
 		return
 	}
 	a.failureNotified = true
@@ -171,14 +176,48 @@ func (a *application) reportFailure(err error, now time.Time) {
 
 func (a *application) resetFailure() {
 	if a.failureNotified {
-		setText(a.icon.tip[:], "Clipboard Cleaner: clears after 5 seconds")
-		notifyIcon.Call(trayModify, uintptr(unsafe.Pointer(&a.icon)))
+		a.updateStatus()
 	}
 	a.failureSince = time.Time{}
 	a.failureNotified = false
 }
 
+func (a *application) updateStatus() {
+	text := fmt.Sprintf("Clipboard Cleaner: stopped; timeout %ds", a.policy.timeout/time.Second)
+	if a.policy.enabled {
+		text = fmt.Sprintf("Clipboard Cleaner: running; clears after %ds", a.policy.timeout/time.Second)
+	}
+	setText(a.icon.tip[:], text)
+	result, _, err := notifyIcon.Call(trayModify, uintptr(unsafe.Pointer(&a.icon)))
+	if result == 0 {
+		showFatal(apiError("Updating tray status", err))
+	}
+}
+
+func (a *application) setRunning(enabled bool) {
+	if enabled == a.policy.enabled {
+		return
+	}
+	if enabled {
+		a.policy.start(sequenceNumber(), time.Now())
+	} else {
+		a.policy.stop()
+	}
+	if a.failureNotified {
+		// An empty NIF_INFO update dismisses any outstanding failure balloon.
+		setText(a.icon.info[:], "")
+		a.icon.flags |= trayInfo
+	}
+	a.updateStatus()
+	a.icon.flags &^= trayInfo
+	a.failureSince = time.Time{}
+	a.failureNotified = false
+}
+
 func (a *application) observe(now time.Time) {
+	if !a.policy.enabled {
+		return
+	}
 	sequence := sequenceNumber()
 	if sequence != a.policy.sequence {
 		a.resetFailure()
@@ -231,13 +270,30 @@ func (a *application) showMenu() {
 		return
 	}
 	defer destroyMenu.Call(menu)
-	result, _, err := appendMenu.Call(menu, 0, exitCommand, uintptr(unsafe.Pointer(wide("Exit"))))
-	if result == 0 {
-		showFatal(apiError("AppendMenu", err))
-		return
+	startFlags, stopFlags := uintptr(0), uintptr(0)
+	if a.policy.enabled {
+		startFlags = 0x0001
+	} else {
+		stopFlags = 0x0001
+	}
+	for _, item := range []struct {
+		flags, command uintptr
+		label          string
+	}{
+		{startFlags, startCommand, "&Start"},
+		{stopFlags, stopCommand, "S&top"},
+		{0, timeoutCommand, "Time&out..."},
+		{0x0800, 0, ""},
+		{0, exitCommand, "E&xit"},
+	} {
+		result, _, err := appendMenu.Call(menu, item.flags, item.command, uintptr(unsafe.Pointer(wide(item.label))))
+		if result == 0 {
+			showFatal(apiError("AppendMenu", err))
+			return
+		}
 	}
 	var position point
-	result, _, err = getCursorPos.Call(uintptr(unsafe.Pointer(&position)))
+	result, _, err := getCursorPos.Call(uintptr(unsafe.Pointer(&position)))
 	if result == 0 {
 		showFatal(apiError("GetCursorPos", err))
 		return
@@ -246,7 +302,16 @@ func (a *application) showMenu() {
 	command, _, _ := trackPopupMenu.Call(menu, 0x0100|0x0080|0x0002,
 		uintptr(position.x), uintptr(position.y), 0, a.window, 0)
 	postMessage.Call(a.window, 0, 0, 0)
-	if command == exitCommand {
+	switch command {
+	case startCommand:
+		a.setRunning(true)
+	case stopCommand:
+		a.setRunning(false)
+	case timeoutCommand:
+		if err := a.showSettings(); err != nil {
+			showFatal(err)
+		}
+	case exitCommand:
 		destroyWindow.Call(a.window)
 	}
 }
@@ -271,6 +336,9 @@ func windowProcedure(window uintptr, id uint32, wParam, lParam uintptr) uintptr 
 		destroyWindow.Call(window)
 		return 0
 	case wmDestroy:
+		if app.settings != 0 {
+			destroyWindow.Call(app.settings)
+		}
 		if app.timer {
 			killTimer.Call(window, 1)
 		}
@@ -339,7 +407,7 @@ func run() error {
 		icon:     icon,
 	}
 	app.icon.size = uint32(unsafe.Sizeof(app.icon))
-	setText(app.icon.tip[:], "Clipboard Cleaner: clears after 5 seconds")
+	setText(app.icon.tip[:], "Clipboard Cleaner: running; clears after 10s")
 	if err := app.installTray(); err != nil {
 		return err
 	}
@@ -362,6 +430,12 @@ func run() error {
 		}
 		if result == 0 {
 			return nil
+		}
+		if app.settings != 0 {
+			handled, _, _ := isDialogMessage.Call(app.settings, uintptr(unsafe.Pointer(&msg)))
+			if handled != 0 {
+				continue
+			}
 		}
 		translateMessage.Call(uintptr(unsafe.Pointer(&msg)))
 		dispatchMessage.Call(uintptr(unsafe.Pointer(&msg)))
