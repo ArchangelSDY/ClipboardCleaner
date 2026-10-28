@@ -1,5 +1,7 @@
 //go:build windows
 
+//go:generate go run github.com/akavel/rsrc@v0.10.2 -arch amd64 -ico assets\clipboard-cleaner.ico -o icon_windows_amd64.syso
+
 package main
 
 import (
@@ -26,6 +28,8 @@ var (
 	postMessage             = user32.NewProc("PostMessageW")
 	registerWindowMessage   = user32.NewProc("RegisterWindowMessageW")
 	loadIcon                = user32.NewProc("LoadIconW")
+	loadImage               = user32.NewProc("LoadImageW")
+	getSystemMetrics        = user32.NewProc("GetSystemMetrics")
 	setTimer                = user32.NewProc("SetTimer")
 	killTimer               = user32.NewProc("KillTimer")
 	addClipboardListener    = user32.NewProc("AddClipboardFormatListener")
@@ -369,11 +373,16 @@ func run() error {
 	if instance == 0 {
 		return apiError("GetModuleHandle", err)
 	}
+	icon, _, err := loadIcon.Call(instance, 1)
+	if icon == 0 {
+		return apiError("LoadIcon", err)
+	}
 	className := wide("ClipboardCleanerWindow")
 	class := windowClass{
 		procedure: syscall.NewCallback(windowProcedure),
 		instance:  instance,
 		className: className,
+		icon:      icon,
 	}
 	class.size = uint32(unsafe.Sizeof(class))
 	result, _, err := registerClass.Call(uintptr(unsafe.Pointer(&class)))
@@ -395,9 +404,11 @@ func run() error {
 		return apiError("RegisterWindowMessage", err)
 	}
 	app.taskbarCreated = uint32(result)
-	icon, _, err := loadIcon.Call(0, 32512)
+	width, _, _ := getSystemMetrics.Call(49)
+	height, _, _ := getSystemMetrics.Call(50)
+	icon, _, err = loadImage.Call(instance, 1, 1, width, height, 0x8000)
 	if icon == 0 {
-		return apiError("LoadIcon", err)
+		return apiError("LoadImage", err)
 	}
 	app.icon = notificationIcon{
 		window:   app.window,

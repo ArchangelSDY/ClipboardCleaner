@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <rect x="40" y="40" width="158" height="192" rx="22" fill="#163747"/>
+  <rect x="54" y="55" width="130" height="162" rx="12" fill="#f5fafb"/>
+  <rect x="86" y="22" width="66" height="50" rx="13" fill="#19b5a5"/>
+  <rect x="106" y="32" width="26" height="10" rx="5" fill="#163747"/>
+  <path d="M77 103h81M77 129h61" fill="none" stroke="#7a969f" stroke-width="10" stroke-linecap="round"/>
+  <g transform="translate(177 179) rotate(-38)">
+    <defs>
+      <clipPath id="eraser"><rect x="-49" y="-24" width="98" height="48" rx="9"/></clipPath>
+    </defs>
+    <g clip-path="url(#eraser)">
+      <rect x="-49" y="-24" width="98" height="48" fill="#f57955"/>
+      <rect x="19" y="-24" width="30" height="48" fill="#fff4df"/>
+      <path d="M19-24v48" stroke="#163747" stroke-width="4"/>
+    </g>
+    <rect x="-49" y="-24" width="98" height="48" rx="9" fill="none" stroke="#163747" stroke-width="5"/>
+  </g>
+  <path d="M218 78l5 13 13 5-13 5-5 13-5-13-13-5 13-5z" fill="#19b5a5"/>
+  <circle cx="222" cy="126" r="5" fill="#19b5a5"/>
+</svg>

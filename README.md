@@ -6,6 +6,8 @@ notifications, a hidden window, a notification-area (tray) icon, and a native
 popup menu. It never reads or logs clipboard contents and has no dependencies
 outside the Go standard library.
 
+![Clipboard Cleaner icon](assets/clipboard-cleaner.png)
+
 ## Build and run
 
 Requires Windows 10/11 and Go 1.19 or newer. In PowerShell:
@@ -57,3 +59,21 @@ Tests exercise expiration, reset, lock-time sequence changes, self-generated
 clears, sequence wraparound, contention retries, stop/start grace periods,
 timeout validation, and runtime timeout changes without touching the actual
 clipboard.
+
+## Icon artwork
+
+The original icon combines a clipboard, eraser, and clean sparkle. Its transparent
+ICO includes sizes from 16 to 256 pixels, used by the tray and executable.
+Editable vector artwork is in `assets\clipboard-cleaner.svg`. To regenerate
+the matching raster artwork and the embedded amd64 Windows resource:
+
+```powershell
+.\scripts\draw-icon.ps1
+go generate
+go build -trimpath -ldflags="-H=windowsgui" -o ClipboardCleaner.exe .
+```
+
+The resource compiler (`github.com/akavel/rsrc`, pinned to v0.10.2) is a
+generation-only tool; normal builds use the included `icon_windows_amd64.syso`
+and require no downloads or extra runtime dependencies. Other Windows target
+architectures need a resource generated with the matching `-arch` and filename.
